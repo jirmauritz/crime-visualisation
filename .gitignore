@@ -90,3 +90,6 @@ ENV/
 
 # Idea project settings
 .idea
+
+# Notes
+*.ad
