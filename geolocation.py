@@ -7,13 +7,13 @@ import matplotlib.patches as mpatches
 from mpl_toolkits.basemap import Basemap
 from bokeh.io import output_file, save
 from bokeh.layouts import layout, widgetbox
-from bokeh.models.widgets import RadioButtonGroup
+from bokeh.models.widgets import RadioButtonGroup, Div
 from bokeh.models import (
   GMapPlot, GMapOptions, ColumnDataSource, Circle, DataRange1d, PanTool, WheelZoomTool, BoxSelectTool,
-  HoverTool, CustomJS
+  HoverTool, CustomJS, Slider
 )
 
-DATA_FILE = 'data/crime_homicide_subset.csv'
+DATA_FILE = 'data/crime_homicide_subset_modified.csv'
 OUT_DIR   = 'output/'
 # to display bokeh graph, insert Google API key here
 API_KEY   = ''
@@ -25,6 +25,8 @@ def loadData():
     df = pd.read_csv(DATA_FILE)
     # remove two outliers (dont even lay in DC)
     df.drop(df.index[[222,758]], inplace=True)
+    # sort by date
+    df.sort_values(['year', 'day', 'hour'], inplace=True)
     return df
 
 '''
@@ -85,7 +87,7 @@ def scatterPlot(df, feature=None):
     m = backgroundLayer(lons, lats)
     lons, lats = m.shiftdata(lons, lats)
     for lon,lat,c in zip(lons, lats, colors):
-        m.scatter(lon, lat, marker='o', color=c, alpha=0.4, latlon=True)
+        m.scatter(lon, lat, marker='o', s=1.0, color=c, alpha=0.4, latlon=True)
 
     # graph style
     title = 'Scatter plot of crimes in DC'
@@ -161,22 +163,26 @@ def bokeh_scatter(df):
             lon=df['long'],
             offense=df['OFFENSE'],
             weapon=df['METHOD'],
-            start_date=list(df['START_DATE'])
-
+            start=list(df['REPORT_DAT']),
+            hour=list(df['hour']),
+            weekdaynb=df['weekdaynb'],
+            weekday=df['weekday'],
+            alpha=[0.5] * len(df),
         )
     )
 
-    circle = Circle(x="lon", y="lat", size=5, fill_color="color", fill_alpha=0.5, line_color=None)
+    circle = Circle(x="lon", y="lat", size=9, fill_color="color", fill_alpha="alpha", line_color=None)
     plot.add_glyph(source, circle)
     plot.add_tools(PanTool(), WheelZoomTool(), BoxSelectTool(), HoverTool())
     hover = plot.select(dict(type=HoverTool))
     hover.tooltips = OrderedDict([
         ('Weapon', '@weapon'),
         ('Offense', '@offense'),
-        ('Date', '@start_date'),
+        ('Date', '@start'),
+        ('Day of week', '@weekday'),
     ])
 
-    callback = CustomJS(args=dict(source=source), code="""
+    optCallback = CustomJS(args=dict(source=source), code="""
         var data = source.data;
         var option = cb_obj.active
         switch(option) {
@@ -205,14 +211,46 @@ def bokeh_scatter(df):
                     }
                 }
                 break;
+            case 3:
+                for (i = 0; i < data['color'].length; i++) {
+                    r = data['weekdaynb'][i] * 36
+                    g = 255 - data['weekdaynb'][i] * 36
+                    data['color'][i] = 'rgb(' + r + ',' + g + ',0)'
+                }
+                break;
         }
         source.trigger('change');
     """)
 
-    button_group = RadioButtonGroup(labels=["All", "Offense (sex abuse [red], homicide [blue])",
-                                            "Weapon (gun [red], knife [blue], other [green])"], active=0, callback=callback)
+    sliderCallback = CustomJS(args=dict(source=source), code="""
+        var data = source.data;
+        var num = cb_obj.value
+        document.getElementById("date").innerHTML = "1/1/2011 - " + data['start'][num];
+        if (data['alpha'][num+1] == 0.5) {
+            i = num+1;
+            while (data['alpha'][i] == 0.5) {
+                data['alpha'][i] = 0;
+                i++;
+            }
+        }
+        if (data['alpha'][num-1] == 0) {
+            i = num-1;
+            while (data['alpha'][i] == 0) {
+                data['alpha'][i] = 0.5;
+                i--;
+            }
+        }
+        source.trigger('change');
+    """)
 
-    l = layout([[plot, widgetbox(button_group)]])
+    div = Div(text="<p id=\"date\"> 1/1/2011 - 5/31/2016 0:32:00 </p>", width=500, height=100)
+
+    button_group = RadioButtonGroup(labels=["All", "Offense (sex abuse [red], homicide [blue])",
+                                            "Weapon (gun [red], knife [blue], other [green])",
+                                            "Day of week (Monday [green], Sunday [red])"], active=0, callback=optCallback)
+    slider = Slider(start=0, end=len(df)-1, value=len(df), step=1, title="Number of points according to date", callback=sliderCallback)
+
+    l = layout([[plot, widgetbox(button_group, slider, div)]])
     save(l)
 
 
